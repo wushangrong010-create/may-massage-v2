@@ -1,28 +1,210 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>May Massage</title><style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f3ee;margin:0;color:#25231f}
-main{max-width:520px;margin:auto;padding:22px 16px} .card{background:white;border-radius:18px;padding:17px;margin:12px 0;border:1px solid #e8e0d7}
-h1{margin:0}.muted{color:#777168}.status{display:inline-block;background:#eef6f1;color:#2f7d5b;padding:7px 10px;border-radius:99px;font-weight:700}
-.row{border-top:1px solid #eee5dc;padding:13px 0}.row:first-child{border:0}.time{font-weight:800;font-size:18px}
-button{border:0;border-radius:12px;padding:12px 14px;font-weight:700;margin:4px;background:#25231f;color:white}
-#err{color:#9b3b31}
-</style></head><body><main>
-<h1>May Massage</h1><div class="muted" id="date"></div><p><span class="status" id="status">● Available</span></p>
-<div class="card"><b>Next Client</b><div id="next" class="row">Loading calendar…</div></div>
-<div class="card"><b>Today's Appointments</b><div id="list">Loading calendar…</div><div id="err"></div></div>
-<div class="card"><b>May Status</b><br><button onclick="setStatus('Available')">Available</button><button onclick="setStatus('On Break')">Break</button><button onclick="setStatus('Finished Today')">Finish Today</button></div>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>May Massage</title>
+
+<style>
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#f7f5f0;
+  color:#222;
+  margin:0;
+}
+main{
+  max-width:520px;
+  margin:auto;
+  padding:24px;
+}
+h1{
+  margin:0;
+}
+.muted{
+  color:#777168;
+}
+.status{
+  color:#176b4d;
+  font-weight:600;
+}
+.card{
+  background:white;
+  border-radius:18px;
+  padding:18px;
+  margin-top:14px;
+  box-shadow:0 1px 4px rgba(0,0,0,.06);
+}
+.row{
+  border-top:1px solid #eee5dc;
+  padding:12px 0;
+}
+.time{
+  font-size:20px;
+  font-weight:700;
+}
+button{
+  border:0;
+  border-radius:12px;
+  padding:11px 14px;
+  margin:8px 4px 0 0;
+  background:#30383b;
+  color:white;
+  font-weight:600;
+}
+#err{
+  color:#9b3b31;
+}
+</style>
+</head>
+
+<body>
+<main>
+
+<h1>May Massage</h1>
+<div class="muted" id="date"></div>
+
+<p>
+<span class="status" id="status">● Available</span>
+</p>
+
+<div class="card">
+<b>Next Client</b>
+<div id="next" class="row">Loading appointments...</div>
+</div>
+
+<div class="card">
+<b>Today's Appointments</b>
+<div id="list">Loading appointments...</div>
+<div id="err"></div>
+</div>
+
+<div class="card">
+<b>May Status</b><br>
+<button onclick="setStatus('Available')">Available</button>
+<button onclick="setStatus('On Break')">Break</button>
+<button onclick="setStatus('Finished Today')">Finish Today</button>
+</div>
+
 <script>
-const fmt=t=>new Date(t).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
-const today=new Date(); document.getElementById('date').textContent=today.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
-function setStatus(s){document.getElementById('status').textContent='● '+s; localStorage.setItem('mayStatus',s)}
-let saved=localStorage.getItem('mayStatus'); if(saved)setStatus(saved);
+
+const fmt = t => new Date(t).toLocaleTimeString([], {
+  hour:'numeric',
+  minute:'2-digit'
+});
+
+const endTime = appointment => {
+  const start = new Date(appointment.start);
+  return new Date(
+    start.getTime() + Number(appointment.duration) * 60000
+  );
+};
+
+const today = new Date();
+
+document.getElementById('date').textContent =
+  today.toLocaleDateString([], {
+    weekday:'long',
+    month:'long',
+    day:'numeric'
+  });
+
+function setStatus(s){
+  document.getElementById('status').textContent = '● ' + s;
+  localStorage.setItem('mayStatus',s);
+}
+
+let saved = localStorage.getItem('mayStatus');
+if(saved){
+  setStatus(saved);
+}
+
 async function load(){
- try{
-  const r=await fetch('/api/appointments'); if(!r.ok)throw Error('Calendar connection unavailable');
-  const data=await r.json();
-  const list=document.getElementById('list'); list.innerHTML='';
-  data.forEach(a=>{let d=document.createElement('div');d.className='row';d.innerHTML=`<div class="time">${fmt(a.start)} – ${fmt(a.end)}</div><b>${a.customer}</b> · ${a.duration} min<br><span class="muted">${a.service} · $${a.price} CAD</span>`;list.appendChild(d)});
-  document.getElementById('next').innerHTML=data.length?`<div class="time">${fmt(data[0].start)} – ${fmt(data[0].end)}</div><b>${data[0].customer}</b> · ${data[0].duration} min<br><span class="muted">${data[0].service} · $${data[0].price} CAD</span>`:'No more appointments today';
- }catch(e){document.getElementById('next').textContent='Calendar not connected';document.getElementById('list').innerHTML='';document.getElementById('err').textContent='Backend connection is required for live Google Calendar data.'}
-} load(); setInterval(load,60000);
-</script></main></body></html>
+
+  try{
+
+    const r = await fetch('/api/appointments');
+
+    if(!r.ok){
+      throw Error('Appointment connection unavailable');
+    }
+
+    const data = await r.json();
+
+    data.sort(
+      (a,b) => new Date(a.start) - new Date(b.start)
+    );
+
+    const list = document.getElementById('list');
+    list.innerHTML = '';
+
+    data.forEach(a => {
+
+      const d = document.createElement('div');
+      d.className = 'row';
+
+      d.innerHTML = `
+        <div class="time">
+          ${fmt(a.start)} – ${fmt(endTime(a))}
+        </div>
+
+        <b>${a.customer}</b> · ${a.duration} min
+        <br>
+
+        <span class="muted">
+          ${a.service} · $${a.price} CAD
+        </span>
+      `;
+
+      list.appendChild(d);
+
+    });
+
+    const next = document.getElementById('next');
+
+    if(data.length){
+
+      const a = data[0];
+
+      next.innerHTML = `
+        <div class="time">
+          ${fmt(a.start)} – ${fmt(endTime(a))}
+        </div>
+
+        <b>${a.customer}</b> · ${a.duration} min
+        <br>
+
+        <span class="muted">
+          ${a.service} · $${a.price} CAD
+        </span>
+      `;
+
+    }else{
+
+      next.textContent = 'No more appointments today';
+
+    }
+
+    document.getElementById('err').textContent = '';
+
+  }catch(e){
+
+    document.getElementById('next').textContent =
+      'Appointment connection unavailable';
+
+    document.getElementById('list').innerHTML = '';
+
+    document.getElementById('err').textContent =
+      'Backend connection is required for live appointment data.';
+
+  }
+
+}
+
+load();
+setInterval(load,60000);
+
+</script>
+
+</main>
+</body>
+</html>
