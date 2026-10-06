@@ -1,40 +1,123 @@
-from flask import Flask, jsonify, request, send_from_directory
+import os
 from datetime import datetime
 
-app = Flask(__name__, static_folder='.')
+import psycopg
+from psycopg.rows import dict_row
+from flask import Flask, jsonify, request, send_from_directory
 
-appointments = []
+app = Flask(__name__, static_folder=".")
 
-@app.get('/')
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+
+def get_db():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not configured")
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+
+def init_db():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS appointments (
+                    id SERIAL PRIMARY KEY,
+                    customer TEXT NOT NULL,
+                    phone TEXT,
+                    start_time TIMESTAMPTZ NOT NULL,
+                    duration INTEGER NOT NULL,
+                    service TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+
+@app.get("/")
 def home():
-    return send_from_directory('.', 'index.html')
+    return send_from_directory(".", "index.html")
 
-@app.route('/api/appointments', methods=['GET', 'POST'])
+
+@app.route("/api/appointments", methods=["GET", "POST"])
 def handle_appointments():
-    if request.method == 'GET':
-        return jsonify(appointments)
+    if request.method == "GET":
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, customer, phone, start_time,
+                           duration, service
+                    FROM appointments
+                    ORDER BY start_time
+                """)
+                rows = cur.fetchall()
+
+        result = []
+        for row in rows:
+            result.append({
+                "id": row["id"],
+                "customer": row["customer"],
+                "phone": row["phone"],
+                "start": row["start_time"].isoformat(),
+                "duration": row["duration"],
+                "service": row["service"],
+                "price": row["duration"]
+            })
+
+        return jsonify(result)
 
     data = request.get_json(silent=True) or {}
 
-    customer = data.get('customer')
-    start = data.get('start')
-    duration = data.get('duration', 60)
-    service = data.get('service', 'Undecided')
+    customer = str(data.get("customer", "")).strip()
+    phone = str(data.get("phone", "")).strip()
+    start = str(data.get("start", "")).strip()
+    service = str(data.get("service", "")).strip()
 
-    if not customer or not start:
-        return jsonify({"error": "customer and start are required"}), 400
+    try:
+        duration = int(data.get("duration", 0))
+    except (TypeError, ValueError):
+        duration = 0
 
-    appointment = {
-        "customer": customer,
-        "start": start,
-        "duration": int(duration),
-        "service": service,
-        "price": int(duration)
-    }
+    if not customer or not start or not service:
+        return jsonify({
+            "error": "customer, start and service are required"
+        }), 400
 
-    appointments.append(appointment)
+    if duration < 60 or duration % 10 != 0:
+        return jsonify({
+            "error": "duration must be at least 60 minutes and use 10-minute increments"
+        }), 400
 
-    return jsonify(appointment), 201
+    try:
+        start_time = datetime.fromisoformat(start)
+    except ValueError:
+        return jsonify({
+            "error": "invalid start date/time"
+        }), 400
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO appointments
+                    (customer, phone, start_time, duration, service)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                customer,
+                phone,
+                start_time,
+                duration,
+                service
+            ))
+            appointment_id = cur.fetchone()["id"]
+
+    return jsonify({
+        "ok": True,
+        "id": appointment_id
+    }), 201
+
+
+with app.app_context():
+    init_db()
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
