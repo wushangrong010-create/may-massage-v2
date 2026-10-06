@@ -108,7 +108,8 @@ def handle_appointments():
                 service
             ))
             appointment_id = cur.fetchone()["id"]
-
+        conn.commit()
+    
     return jsonify({
         "ok": True,
         "id": appointment_id
