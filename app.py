@@ -37,7 +37,9 @@ def init_db():
 def home():
     return send_from_directory(".", "index.html")
 
-
+@app.get("/booking")
+def booking():
+    return send_from_directory(".", "booking.html")
 @app.route("/api/appointments", methods=["GET", "POST"])
 def handle_appointments():
     if request.method == "GET":
