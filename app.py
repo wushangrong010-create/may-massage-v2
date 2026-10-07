@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg.rows import dict_row
@@ -56,7 +57,7 @@ def handle_appointments():
                 "id": row["id"],
                 "customer": row["customer"],
                 "phone": row["phone"],
-                "start": row["start_time"].isoformat(),
+                "start": row["start_time"].astimezone(ZoneInfo("America/Winnipeg")).isoformat(),
                 "duration": row["duration"],
                 "service": row["service"],
                 "price": row["duration"]
