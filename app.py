@@ -183,6 +183,8 @@ def twilio_heard():
     from xml.sax.saxutils import escape
 
     speech = request.form.get("SpeechResult", "").strip()
+    print("TWILIO HEARD: webhook received", flush=True)
+    print("TWILIO SPEECH RESULT:", repr(speech), flush=True)
 
     if speech:
         message = "I heard you say: " + speech
