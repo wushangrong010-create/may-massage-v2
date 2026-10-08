@@ -156,6 +156,18 @@ def cancel_appointment(appointment_id):
         "ok": True,
         "id": appointment_id
     })
+
+@app.route("/twilio/voice", methods=["GET", "POST"])
+def twilio_voice():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="en-US" voice="alice">
+        Thank you for calling May Massage. How can I help you today?
+    </Say>
+</Response>"""
+    return app.response_class(xml, mimetype="text/xml")
+
+
 with app.app_context():
     init_db()
 
