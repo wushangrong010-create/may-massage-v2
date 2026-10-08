@@ -150,8 +150,47 @@
     service.className = 'muted';
     service.textContent = (a.service || '') + ' · $' + a.price + ' CAD';
 
-    row.append(date, time, details, service);
-    return row;
+    const cancelButton = document.createElement('button');
+cancelButton.textContent = 'Cancel';
+cancelButton.style.marginTop = '12px';
+cancelButton.style.backgroundColor = '#b42318';
+cancelButton.style.color = 'white';
+cancelButton.style.border = 'none';
+cancelButton.style.borderRadius = '6px';
+cancelButton.style.padding = '8px 14px';
+cancelButton.style.cursor = 'pointer';
+
+cancelButton.onclick = async function () {
+    const confirmed = confirm(
+        'Cancel the appointment for ' + a.customer + '?'
+    );
+
+    if (!confirmed) return;
+
+    cancelButton.disabled = true;
+    cancelButton.textContent = 'Cancelling...';
+
+    try {
+        const response = await fetch(
+            '/api/appointments/' + a.id,
+            { method: 'DELETE' }
+        );
+
+        if (!response.ok) {
+            throw new Error('Cancellation failed');
+        }
+
+        await load();
+
+    } catch (error) {
+        alert('Unable to cancel. Please try again.');
+        cancelButton.disabled = false;
+        cancelButton.textContent = 'Cancel';
+    }
+};
+
+row.append(date, time, details, service, cancelButton);
+return row;
   }
 
   async function load() {
