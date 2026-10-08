@@ -58,10 +58,7 @@
   <div class="muted" id="date"></div>
   <p><span class="status" id="status">● Available</span></p>
 
-  <div class="card">
-    <b>Next Client</b>
-    <div id="next" class="row">Loading appointments...</div>
-  </div>
+  
 
   <div class="card">
     <b>Appointments</b>
@@ -179,18 +176,18 @@
       }).sort((a, b) => new Date(a.start) - new Date(b.start));
 
       const list = document.getElementById('list');
-      const next = document.getElementById('next');
+      
       list.replaceChildren();
-      next.replaceChildren();
+     
 
       if (upcoming.length === 0) {
         list.textContent = 'No upcoming appointments';
-        next.textContent = 'No upcoming appointments';
+        
       } else {
         upcoming.forEach(a => {
           list.appendChild(appointmentElement(a, todayKey));
         });
-        next.appendChild(appointmentElement(upcoming[0], todayKey));
+        
       }
 
       document.getElementById('err').textContent = '';
