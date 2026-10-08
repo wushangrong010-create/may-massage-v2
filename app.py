@@ -98,6 +98,22 @@ def handle_appointments():
 
     with get_db() as conn:
         with conn.cursor() as cur:
+                        
+            cur.execute("SELECT pg_advisory_xact_lock(20261008)")
+
+            cur.execute("""
+                SELECT id
+                FROM appointments
+                WHERE start_time < %s + (%s * INTERVAL '1 minute')
+                  AND start_time + (duration * INTERVAL '1 minute') > %s
+                LIMIT 1
+            """, (start_time, duration, start_time))
+
+            if cur.fetchone():
+                return jsonify({
+                    "ok": False,
+                    "error": "This time is already booked. Please choose another time."
+                }), 409            
             cur.execute("""
                 INSERT INTO appointments
                     (customer, phone, start_time, duration, service)
