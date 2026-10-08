@@ -134,8 +134,29 @@ def handle_appointments():
         "id": appointment_id
     }), 201
 
+@app.route("/api/appointments/<int:appointment_id>", methods=["DELETE"])
+def cancel_appointment(appointment_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM appointments WHERE id = %s RETURNING id",
+                (appointment_id,)
+            )
+            deleted = cur.fetchone()
 
-with app.app_context():
+            if not deleted:
+                return jsonify({
+                    "ok": False,
+                    "error": "Appointment not found"
+                }), 404
+
+            conn.commit()
+
+    return jsonify({
+        "ok": True,
+        "id": appointment_id
+    })
+    with app.app_context():
     init_db()
 
 
