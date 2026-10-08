@@ -157,15 +157,46 @@ def cancel_appointment(appointment_id):
         "id": appointment_id
     })
 
+
 @app.route("/twilio/voice", methods=["GET", "POST"])
 def twilio_voice():
     xml = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    <Gather input="speech" language="en-US"
+            action="/twilio/heard" method="POST"
+            speechTimeout="auto" timeout="8">
+        <Say language="en-US" voice="alice">
+            Thank you for calling May Massage.
+            How can I help you today?
+        </Say>
+    </Gather>
     <Say language="en-US" voice="alice">
-        Thank you for calling May Massage. How can I help you today?
+        Sorry, I did not hear anything. Please call again.
     </Say>
 </Response>"""
     return app.response_class(xml, mimetype="text/xml")
+
+
+@app.route("/twilio/heard", methods=["POST"])
+def twilio_heard():
+    from flask import request
+    from xml.sax.saxutils import escape
+
+    speech = request.form.get("SpeechResult", "").strip()
+
+    if speech:
+        message = "I heard you say: " + speech
+    else:
+        message = "Sorry, I could not understand you."
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Response><Say language="en-US" voice="alice">'
+        + escape(message)
+        + '</Say></Response>'
+    )
+    return app.response_class(xml, mimetype="text/xml")
+
 
 
 with app.app_context():
