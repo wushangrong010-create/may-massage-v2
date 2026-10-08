@@ -1,210 +1,207 @@
+
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>May Massage</title>
-
-<style>
-body{
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  background:#f7f5f0;
-  color:#222;
-  margin:0;
-}
-main{
-  max-width:520px;
-  margin:auto;
-  padding:24px;
-}
-h1{
-  margin:0;
-}
-.muted{
-  color:#777168;
-}
-.status{
-  color:#176b4d;
-  font-weight:600;
-}
-.card{
-  background:white;
-  border-radius:18px;
-  padding:18px;
-  margin-top:14px;
-  box-shadow:0 1px 4px rgba(0,0,0,.06);
-}
-.row{
-  border-top:1px solid #eee5dc;
-  padding:12px 0;
-}
-.time{
-  font-size:20px;
-  font-weight:700;
-}
-button{
-  border:0;
-  border-radius:12px;
-  padding:11px 14px;
-  margin:8px 4px 0 0;
-  background:#30383b;
-  color:white;
-  font-weight:600;
-}
-#err{
-  color:#9b3b31;
-}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>May Massage</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f7f5f0;
+      color: #222;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 620px; margin: auto; padding: 24px; }
+    h1 { margin: 0 0 6px; }
+    .muted { color: #777168; }
+    .status { color: #176b4d; font-weight: 600; }
+    .card {
+      background: white;
+      border-radius: 18px;
+      padding: 18px;
+      margin-top: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    }
+    .row {
+      border-top: 1px solid #eee5dc;
+      padding: 14px 0;
+    }
+    .row:first-child { border-top: 0; }
+    .date {
+      font-size: 17px;
+      font-weight: 800;
+      color: #222;
+      margin-bottom: 5px;
+    }
+    .future { color: #c62828; }
+    .time { font-size: 19px; font-weight: 700; }
+    .details { margin-top: 4px; line-height: 1.5; }
+    .next { background: #f0f8f3; border-radius: 12px; padding: 12px; }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 14px;
+      margin: 8px 4px 0 0;
+      background: #30383b;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .err { color: #9b3b31; margin-top: 8px; }
+  </style>
 </head>
-
 <body>
 <main>
+  <h1>May Massage</h1>
+  <div class="muted" id="date"></div>
+  <p><span class="status" id="status">● Available</span></p>
 
-<h1>May Massage</h1>
-<div class="muted" id="date"></div>
+  <div class="card">
+    <b>Next Client</b>
+    <div id="next" class="row">Loading appointments...</div>
+  </div>
 
-<p>
-<span class="status" id="status">● Available</span>
-</p>
+  <div class="card">
+    <b>Appointments</b>
+    <div id="list">Loading appointments...</div>
+    <div id="err" class="err"></div>
+  </div>
 
-<div class="card">
-<b>Next Client</b>
-<div id="next" class="row">Loading appointments...</div>
-</div>
-
-<div class="card">
-<b>Today's Appointments</b>
-<div id="list">Loading appointments...</div>
-<div id="err"></div>
-</div>
-
-<div class="card">
-<b>May Status</b><br>
-<button onclick="setStatus('Available')">Available</button>
-<button onclick="setStatus('On Break')">Break</button>
-<button onclick="setStatus('Finished Today')">Finish Today</button>
-</div>
+  <div class="card">
+    <b>May Status</b>
+    <div>
+      <button onclick="setStatus('Available')">Available</button>
+      <button onclick="setStatus('On Break')">Break</button>
+      <button onclick="setStatus('Finished Today')">Finish Today</button>
+    </div>
+  </div>
+</main>
 
 <script>
+  const ZONE = 'America/Winnipeg';
 
-const fmt = t => new Date(t).toLocaleTimeString([], {
-  hour:'numeric',
-  minute:'2-digit'
-});
-
-const endTime = appointment => {
-  const start = new Date(appointment.start);
-  return new Date(
-    start.getTime() + Number(appointment.duration) * 60000
-  );
-};
-
-const today = new Date();
-
-document.getElementById('date').textContent =
-  today.toLocaleDateString([], {
-    weekday:'long',
-    month:'long',
-    day:'numeric'
-  });
-
-function setStatus(s){
-  document.getElementById('status').textContent = '● ' + s;
-  localStorage.setItem('mayStatus',s);
-}
-
-let saved = localStorage.getItem('mayStatus');
-if(saved){
-  setStatus(saved);
-}
-
-async function load(){
-
-  try{
-
-    const r = await fetch('/api/appointments');
-
-    if(!r.ok){
-      throw Error('Appointment connection unavailable');
-    }
-
-    const data = await r.json();
-
-    data.sort(
-    (a, b) => new Date(a.start) - new Date(b.start)
-);
-
-    const list = document.getElementById('list');
-    list.innerHTML = '';
-
-    data.forEach(a => {
-
-      const d = document.createElement('div');
-      d.className = 'row';
-
-      d.innerHTML = `
-        <div class="time">
-          ${fmt(a.start)} – ${fmt(endTime(a))}
-        </div>
-
-        <b>${a.customer}</b> · ${a.duration} min
-        <br>
-
-        <span class="muted">
-          ${a.service} · $${a.price} CAD
-        </span>
-      `;
-
-      list.appendChild(d);
-
-    });
-
-    const next = document.getElementById('next');
-
-    if(data.length){
-
-      const a = data[0];
-
-      next.innerHTML = `
-        <div class="time">
-          ${fmt(a.start)} – ${fmt(endTime(a))}
-        </div>
-
-        <b>${a.customer}</b> · ${a.duration} min
-        <br>
-
-        <span class="muted">
-          ${a.service} · $${a.price} CAD
-        </span>
-      `;
-
-    }else{
-
-      next.textContent = 'No more appointments today';
-
-    }
-
-    document.getElementById('err').textContent = '';
-
-  }catch(e){
-
-    document.getElementById('next').textContent =
-      'Appointment connection unavailable';
-
-    document.getElementById('list').innerHTML = '';
-
-    document.getElementById('err').textContent =
-      'Backend connection is required for live appointment data.';
-
+  function dateKey(value) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(value);
+    const get = type => parts.find(p => p.type === type).value;
+    return get('year') + '-' + get('month') + '-' + get('day');
   }
 
-}
+  function dateLabel(value) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: ZONE,
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'short'
+    }).format(value);
+  }
 
-load();
-setInterval(load,60000);
+  function timeLabel(value) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: ZONE,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: false
+    }).format(value);
+  }
 
+  function endTime(a) {
+    return new Date(
+      new Date(a.start).getTime() + Number(a.duration) * 60000
+    );
+  }
+
+  function setStatus(s) {
+    document.getElementById('status').textContent = '● ' + s;
+    localStorage.setItem('mayStatus', s);
+  }
+
+  const saved = localStorage.getItem('mayStatus');
+  if (saved) setStatus(saved);
+
+  function appointmentElement(a, todayKey) {
+    const start = new Date(a.start);
+    const end = endTime(a);
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const date = document.createElement('div');
+    date.className = 'date' + (dateKey(start) !== todayKey ? ' future' : '');
+    date.textContent = dateLabel(start);
+
+    const time = document.createElement('div');
+    time.className = 'time';
+    time.textContent = timeLabel(start) + ' – ' + timeLabel(end);
+
+    const details = document.createElement('div');
+    details.className = 'details';
+    const name = document.createElement('strong');
+    name.textContent = a.customer || 'Customer';
+    details.appendChild(name);
+    details.appendChild(document.createTextNode(
+      ' · ' + a.duration + ' min'
+    ));
+
+    const service = document.createElement('div');
+    service.className = 'muted';
+    service.textContent = (a.service || '') + ' · $' + a.price + ' CAD';
+
+    row.append(date, time, details, service);
+    return row;
+  }
+
+  async function load() {
+    const now = new Date();
+    const todayKey = dateKey(now);
+    document.getElementById('date').textContent = dateLabel(now);
+
+    try {
+      const response = await fetch('/api/appointments', {
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error('Connection unavailable');
+
+      const data = await response.json();
+      if (!Array.isArray(data)) throw new Error('Invalid appointment data');
+
+      const upcoming = data.filter(a => {
+        const start = new Date(a.start);
+        return !isNaN(start.getTime()) &&
+          Number.isFinite(Number(a.duration)) &&
+          endTime(a).getTime() > now.getTime();
+      }).sort((a, b) => new Date(a.start) - new Date(b.start));
+
+      const list = document.getElementById('list');
+      const next = document.getElementById('next');
+      list.replaceChildren();
+      next.replaceChildren();
+
+      if (upcoming.length === 0) {
+        list.textContent = 'No upcoming appointments';
+        next.textContent = 'No upcoming appointments';
+      } else {
+        upcoming.forEach(a => {
+          list.appendChild(appointmentElement(a, todayKey));
+        });
+        next.appendChild(appointmentElement(upcoming[0], todayKey));
+      }
+
+      document.getElementById('err').textContent = '';
+    } catch (error) {
+      document.getElementById('err').textContent =
+        'Unable to load appointments. Please refresh or check connection.';
+    }
+  }
+
+  load();
+  setInterval(load, 60000);
 </script>
-
-</main>
 </body>
 </html>
