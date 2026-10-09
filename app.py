@@ -2,7 +2,7 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from xml.sax.saxutils import escape
 
@@ -83,132 +83,140 @@ def booking():
 # APPOINTMENTS API
 # =====================================
 
+# Shared rules for web bookings and AI telephone bookings.
+VALID_SERVICES = {"Oil Massage", "Chinese Massage"}
+CLEANUP_MINUTES = 10
+
+
+def parse_start(value):
+    try:
+        result = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        if result.tzinfo is None:
+            result = result.replace(tzinfo=WINNIPEG_TZ)
+        local = result.astimezone(WINNIPEG_TZ)
+        # Reject nonexistent times around daylight-saving transitions.
+        if local.astimezone(timezone.utc).astimezone(WINNIPEG_TZ).replace(fold=local.fold) != local:
+            raise ValueError("Nonexistent local time")
+        return local
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Invalid start date/time")
+
+
+def validate_booking(start_time, duration, service):
+    if service not in VALID_SERVICES:
+        return "Please select Oil Massage or Chinese Massage."
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 60 or duration % 10:
+        return "Duration must be at least 60 minutes, in 10-minute increments."
+    local = start_time.astimezone(WINNIPEG_TZ)
+    if local.weekday() not in (0, 2):
+        return "May Massage is open only on Mondays and Wednesdays."
+    if local.minute % 10 or local.second or local.microsecond:
+        return "Appointments must start on a 10-minute mark."
+    opening = local.replace(hour=10, minute=0, second=0, microsecond=0)
+    closing = local.replace(hour=20, minute=0, second=0, microsecond=0)
+    if local < opening or local + timedelta(minutes=duration) > closing:
+        return "The appointment must fit between 10 AM and 8 PM."
+    if local <= datetime.now(WINNIPEG_TZ):
+        return "Please choose a future appointment time."
+    return None
+
+
+def slot_conflict(cur, start_time, duration):
+    # Existing sessions require ten minutes to clean up before the next session.
+    # New sessions also need ten minutes before any later session.
+    cur.execute("""
+        SELECT id FROM appointments
+        WHERE start_time < %s + (%s * INTERVAL '1 minute')
+          AND start_time + ((duration + %s) * INTERVAL '1 minute') > %s
+        LIMIT 1
+    """, (start_time, duration + CLEANUP_MINUTES, CLEANUP_MINUTES, start_time))
+    return cur.fetchone() is not None
+
+
+def create_booking(customer, phone, start, duration, service):
+    customer = str(customer or "").strip()
+    phone = str(phone or "").strip()
+    service = str(service or "").strip()
+    if not customer or not phone:
+        return {"ok": False, "error": "Customer name and phone number are required."}, 400
+    try:
+        duration = int(duration)
+        start_time = parse_start(start)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Invalid appointment date/time or duration."}, 400
+    error = validate_booking(start_time, duration, service)
+    if error:
+        return {"ok": False, "error": error}, 400
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(20261008)")
+            if slot_conflict(cur, start_time, duration):
+                return {"ok": False, "error": "That time is unavailable. Please choose another time."}, 409
+            cur.execute("""
+                INSERT INTO appointments (customer, phone, start_time, duration, service)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (customer, phone, start_time, duration, service))
+            booking_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "id": booking_id,
+            "start": start_time.isoformat(), "duration": duration,
+            "service": service, "customer": customer}, 201
+
+
+def available_slots(day, duration, service):
+    try:
+        target = datetime.fromisoformat(str(day)).date()
+        duration = int(duration)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Provide date YYYY-MM-DD and duration in minutes."}
+    if target.weekday() not in (0, 2):
+        return {"ok": True, "date": str(target), "available": [], "message": "Closed on this day."}
+    if service not in VALID_SERVICES or duration < 60 or duration % 10:
+        return {"ok": False, "error": "Invalid service or duration."}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT start_time, duration FROM appointments
+                WHERE start_time >= %s AND start_time < %s
+            """, (datetime(target.year, target.month, target.day, tzinfo=WINNIPEG_TZ),
+                  datetime(target.year, target.month, target.day, tzinfo=WINNIPEG_TZ) + timedelta(days=1)))
+            booked = cur.fetchall()
+    slots = []
+    start_of_day = datetime(target.year, target.month, target.day, 10, tzinfo=WINNIPEG_TZ)
+    for minutes in range(0, 601, 10):
+        candidate = start_of_day + timedelta(minutes=minutes)
+        if validate_booking(candidate, duration, service):
+            continue
+        end = candidate + timedelta(minutes=duration)
+        if any(candidate < row["start_time"].astimezone(WINNIPEG_TZ) + timedelta(minutes=row["duration"] + CLEANUP_MINUTES)
+               and end + timedelta(minutes=CLEANUP_MINUTES) > row["start_time"].astimezone(WINNIPEG_TZ)
+               for row in booked):
+            continue
+        slots.append(candidate.strftime("%I:%M %p").lstrip("0"))
+    return {"ok": True, "date": str(target), "duration": duration, "available": slots}
+
+
 @app.route("/api/appointments", methods=["GET", "POST"])
 def handle_appointments():
-
     if request.method == "GET":
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, customer, phone, start_time,
-                           duration, service
-                    FROM appointments
-                    ORDER BY start_time
+                    SELECT id, customer, phone, start_time, duration, service
+                    FROM appointments ORDER BY start_time
                 """)
                 rows = cur.fetchall()
-
-        result = []
-
-        for row in rows:
-            result.append({
-                "id": row["id"],
-                "customer": row["customer"],
-                "phone": row["phone"],
-                "start": row["start_time"].astimezone(
-                    WINNIPEG_TZ
-                ).isoformat(),
-                "duration": row["duration"],
-                "service": row["service"],
-                "price": row["duration"]
-            })
-
-        return jsonify(result)
-
+        return jsonify([{
+            "id": row["id"], "customer": row["customer"], "phone": row["phone"],
+            "start": row["start_time"].astimezone(WINNIPEG_TZ).isoformat(),
+            "duration": row["duration"], "service": row["service"],
+            "price": row["duration"]
+        } for row in rows])
     data = request.get_json(silent=True) or {}
-
-    customer = str(data.get("customer", "")).strip()
-    phone = str(data.get("phone", "")).strip()
-    start = str(data.get("start", "")).strip()
-    service = str(data.get("service", "")).strip()
-
-    try:
-        duration = int(data.get("duration", 0))
-    except (TypeError, ValueError):
-        duration = 0
-
-    if not customer or not start or not service:
-        return jsonify({
-            "error": "customer, start and service are required"
-        }), 400
-
-    if duration < 60 or duration % 10 != 0:
-        return jsonify({
-            "error": (
-                "duration must be at least 60 minutes "
-                "and use 10-minute increments"
-            )
-        }), 400
-
-    try:
-        start_time = datetime.fromisoformat(start)
-
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(
-                tzinfo=WINNIPEG_TZ
-            )
-
-    except ValueError:
-        return jsonify({
-            "error": "invalid start date/time"
-        }), 400
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-
-            cur.execute(
-                "SELECT pg_advisory_xact_lock(20261008)"
-            )
-
-            cur.execute("""
-                SELECT id
-                FROM appointments
-                WHERE start_time <
-                    %s + (%s * INTERVAL '1 minute')
-                  AND start_time +
-                    (duration * INTERVAL '1 minute') > %s
-                LIMIT 1
-            """, (
-                start_time,
-                duration,
-                start_time
-            ))
-
-            if cur.fetchone():
-                return jsonify({
-                    "ok": False,
-                    "error": (
-                        "This time is already booked. "
-                        "Please choose another time."
-                    )
-                }), 409
-
-            cur.execute("""
-                INSERT INTO appointments
-                    (
-                        customer,
-                        phone,
-                        start_time,
-                        duration,
-                        service
-                    )
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                customer,
-                phone,
-                start_time,
-                duration,
-                service
-            ))
-
-            appointment_id = cur.fetchone()["id"]
-
-        conn.commit()
-
-    return jsonify({
-        "ok": True,
-        "id": appointment_id
-    }), 201
+    result, status = create_booking(data.get("customer"), data.get("phone"),
+                                    data.get("start"), data.get("duration"),
+                                    data.get("service"))
+    return jsonify(result), status
 
 
 @app.route(
@@ -301,12 +309,15 @@ IMPORTANT RULES:
 3. If the customer speaks another language,
    respond in that language when possible.
 4. Never invent prices, services or opening hours.
-5. Do not claim that a booking has been made.
-6. You cannot directly create, cancel or change
-   appointments through this phone assistant yet.
-7. If the customer wants an appointment, explain
-   that booking confirmation is not available
-   through the AI phone assistant at this stage.
+5. You can check availability and create bookings using your tools.
+6. Before creating a booking, collect the customer's name, phone number,
+   date, start time, massage type and duration. Read back all details,
+   and ask the customer to explicitly confirm. Do not create before confirmation.
+7. Only say the booking is confirmed when the create_booking tool returns ok=true.
+   If unavailable, use check_availability to suggest nearby available times.
+   Never claim a booking was created without successful tool confirmation.
+   Appointment start times are on 10-minute marks; allow 10 minutes between sessions.
+   Do not offer cancellation or rescheduling by phone yet.
 8. Do not promise that May will call back.
 9. If the customer asks for medical advice,
    avoid diagnosis and recommend a qualified
@@ -376,58 +387,61 @@ def save_conversation(call_sid, messages):
 # OPENAI ANSWERING
 # =====================================
 
+AI_TOOLS = [
+    {"type": "function", "function": {"name": "check_availability",
+     "description": "Get available start times for a specified day, duration and massage service. Use before proposing or confirming a time.",
+     "parameters": {"type": "object", "properties": {
+         "date": {"type": "string", "description": "Winnipeg local date YYYY-MM-DD"},
+         "duration": {"type": "integer", "description": "Massage minutes, 60 or more in increments of 10"},
+         "service": {"type": "string", "enum": ["Oil Massage", "Chinese Massage"]}},
+         "required": ["date", "duration", "service"]}}},
+    {"type": "function", "function": {"name": "create_booking",
+     "description": "Create an appointment ONLY AFTER customer explicitly confirms all details. Never call speculatively.",
+     "parameters": {"type": "object", "properties": {
+         "customer": {"type": "string"}, "phone": {"type": "string"},
+         "start": {"type": "string", "description": "Winnipeg local ISO 8601 start YYYY-MM-DDTHH:MM:SS"},
+         "duration": {"type": "integer"},
+         "service": {"type": "string", "enum": ["Oil Massage", "Chinese Massage"]}},
+         "required": ["customer", "phone", "start", "duration", "service"]}}}
+]
+
+
 def ask_ai(call_sid, customer_speech):
-
     if not ai_client:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not configured"
-        )
-
+        raise RuntimeError("OPENAI_API_KEY is not configured")
     history = load_conversation(call_sid)
-
-    history.append({
-        "role": "user",
-        "content": customer_speech
-    })
-
-    # Keep the latest conversation turns.
-    recent_history = history[-12:]
-
-    messages = [
-        {
-            "role": "system",
-            "content": BUSINESS_INSTRUCTIONS
-        }
-    ] + recent_history
-
-    completion = ai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        max_tokens=180,
-        temperature=0.4,
-        timeout=18
-    )
-
-    answer = (
-        completion.choices[0].message.content or ""
-    ).strip()
-
-    if not answer:
-        answer = (
-            "Sorry, could you please repeat "
-            "your question?"
-        )
-
-    history.append({
-        "role": "assistant",
-        "content": answer
-    })
-
-    save_conversation(
-        call_sid,
-        history[-20:]
-    )
-
+    history.append({"role": "user", "content": customer_speech})
+    messages = [{"role": "system", "content": BUSINESS_INSTRUCTIONS +
+                 "\nCurrent Winnipeg local date and time: " + datetime.now(WINNIPEG_TZ).isoformat()}] + history[-16:]
+    answer = "Sorry, could you please repeat your question?"
+    for _ in range(4):
+        response = ai_client.chat.completions.create(
+            model="gpt-4o-mini", messages=messages, tools=AI_TOOLS,
+            tool_choice="auto", max_tokens=350, temperature=0.2, timeout=25)
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            answer = (msg.content or answer).strip()
+            break
+        messages.append(msg.model_dump(exclude_none=True))
+        for call in msg.tool_calls:
+            try:
+                args = json.loads(call.function.arguments)
+                if call.function.name == "check_availability":
+                    result = available_slots(args.get("date"), args.get("duration"), args.get("service"))
+                elif call.function.name == "create_booking":
+                    result, _ = create_booking(args.get("customer"), args.get("phone"),
+                                               args.get("start"), args.get("duration"), args.get("service"))
+                else:
+                    result = {"ok": False, "error": "Unknown tool"}
+            except Exception:
+                logger.exception("Booking tool failed")
+                result = {"ok": False, "error": "Booking service temporarily unavailable"}
+            messages.append({"role": "tool", "tool_call_id": call.id,
+                             "content": json.dumps(result, ensure_ascii=False)})
+    else:
+        answer = "I'm sorry, I couldn't finish checking that. Could you try again?"
+    history.append({"role": "assistant", "content": answer})
+    save_conversation(call_sid, history[-20:])
     return answer
 
 
