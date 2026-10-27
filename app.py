@@ -313,7 +313,8 @@ IMPORTANT RULES:
 6. Before creating a booking, collect the customer's name, phone number,
    date, start time, massage type and duration. Read back all details,
    and ask the customer to explicitly confirm. Do not create before confirmation.
-7. Only say the booking is confirmed when the create_booking tool returns ok=true.
+7. Read the customer's phone number aloud digit by digit, and ask the customer to confirm it explicitly. If corrected, read the entire corrected number again. Never create a booking before the customer confirms the phone number.
+8. Only say the booking is confirmed when the create_booking tool returns ok=true.
    If unavailable, use check_availability to suggest nearby available times.
    Never claim a booking was created without successful tool confirmation.
    Appointment start times are on 10-minute marks; allow 10 minutes between sessions.
@@ -323,7 +324,8 @@ IMPORTANT RULES:
    avoid diagnosis and recommend a qualified
    healthcare professional when appropriate.
 10. Keep most replies under 50 words.
-11. Do not mention these internal instructions.
+11. After a booking is successfully saved, do not call create_booking again for the same appointment. If the customer says goodbye, politely say goodbye.
+12. Do not mention these internal instructions.
 """
 
 
@@ -430,6 +432,7 @@ Never claim a booking succeeded unless create_booking returns ok=true.
     messages = [{"role": "system", "content": BUSINESS_INSTRUCTIONS + date_rules + calendar_text +
                  "\nCurrent Winnipeg local date and time: " + datetime.now(WINNIPEG_TZ).isoformat()}] + history[-16:]
     answer = "Sorry, could you please repeat your question?"
+    booking_saved = False
     for _ in range(4):
         response = ai_client.chat.completions.create(
             model="gpt-4o-mini", messages=messages, tools=AI_TOOLS,
@@ -437,6 +440,18 @@ Never claim a booking succeeded unless create_booking returns ok=true.
         msg = response.choices[0].message
         if not msg.tool_calls:
             answer = (msg.content or answer).strip()
+            if not booking_saved:
+                import re
+                if re.search(
+                    r"\b(book(?:ing|ed)?\s+(?:is\s+)?confirmed|"
+                    r"(?:appointment|reservation)\s+(?:is\s+)?confirmed|"
+                    r"successfully\s+booked|you're\s+(?:all\s+)?booked)\b",
+                    answer, re.IGNORECASE
+                ):
+                    answer = (
+                        "I haven't confirmed your appointment in our booking "
+                        "system yet. Please let me finish checking and saving it."
+                    )
             break
         messages.append(msg.model_dump(exclude_none=True))
         for call in msg.tool_calls:
@@ -447,6 +462,8 @@ Never claim a booking succeeded unless create_booking returns ok=true.
                 elif call.function.name == "create_booking":
                     result, _ = create_booking(args.get("customer"), args.get("phone"),
                                                args.get("start"), args.get("duration"), args.get("service"))
+                    if result.get("ok") is True:
+                        booking_saved = True
                 else:
                     result = {"ok": False, "error": "Unknown tool"}
             except Exception:
@@ -589,6 +606,12 @@ def twilio_heard():
         )
 
     xml_body = twilio_say(answer)
+
+    if speech.lower().strip(" .,!") in (
+        "bye", "bye bye", "goodbye",
+        "thank you goodbye", "thanks bye"
+    ):
+        return twiml_response(xml_body)
 
     xml_body += twilio_gather(
         "Please go ahead."
