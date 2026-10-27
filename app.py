@@ -576,14 +576,8 @@ def twilio_heard():
             "Could you please say it again?"
         )
 
-        xml_body += twilio_say(
-            "Thank you for calling May Massage. "
-            "Goodbye."
-        )
-
         return twiml_response(xml_body)
-
-    try:
+        try:
 
         answer = ask_ai(
             call_sid,
