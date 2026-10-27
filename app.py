@@ -579,12 +579,12 @@ def twilio_heard():
         return twiml_response(xml_body)
         try:
 
-        answer = ask_ai(
+            answer = ask_ai(
             call_sid,
             speech
-        )
+            )
 
-    except Exception:
+        except Exception:
 
         logger.exception(
             "AI answering failed"
